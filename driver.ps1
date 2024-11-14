@@ -7,16 +7,16 @@ $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Pri
 if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 
     # List available VMs
-    $vms = Get-VM | Select-Object -Property Name
+    $vms = Get-VM | Select-Object -ExpandProperty Name
     Write-Host "Available VMs:"
     for ($i = 0; $i -lt $vms.Count; $i++) {
-        Write-Host "[$($i + 1)] $($vms[$i].Name)"
+        Write-Host "[$($i + 1)] $($vms[$i])"
     }
     
     # Prompt to select VM by number
     $selection = Read-Host "Enter the number of the VM you want to select"
     if ($selection -match '^\d+$' -and $selection -le $vms.Count) {
-        $vm = $vms[$selection - 1].Name
+        $vm = $vms[$selection - 1]
         Write-Host "Selected VM: $vm"
         
         # Enable integration services if needed
