@@ -1,73 +1,56 @@
-# Get all VMs and display numbered list
+# Retrieve all VMs and display a numbered list
 $vms = Get-VM
 Write-Host "`nAvailable Virtual Machines:"
-Write-Host "--------------------------"
-$vms | ForEach-Object -Begin {$i = 1} -Process {
-    Write-Host "$i. $($_.Name)"
-    $i++
+Write-Host "-----------------------------"
+for ($i = 0; $i -lt $vms.Count; $i++) {
+    Write-Host "$($i+1). $($vms[$i].Name)"
 }
 
-# Ask user to select a VM
+# Prompt the user to select a VM
 do {
-    $selection = Read-Host "`nSelect VM number (1-$($vms.Count))"
+    $selection = Read-Host "`nSelect the VM number (1-$($vms.Count))"
     $index = [int]$selection - 1
 } while ($index -lt 0 -or $index -ge $vms.Count)
 
 $vm = $vms[$index].Name
 Write-Host "Selected VM: $vm`n"
 
-# Define paths
-$systemPath = "C:\Windows\System32"
-$driverPath = Join-Path $systemPath "DriverStore\FileRepository"
-$tempBasePath = "C:\Temp"
+# Define system paths
+$systemPath = "C:\Windows\System32\"
+$driverPath = "C:\Windows\System32\DriverStore\FileRepository\"
 
-# Check for admin privileges
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Error: This script requires administrative privileges." -ForegroundColor Red
-    exit 1
-}
+# Check if the script is running with admin privileges
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 
-try {
-    # Enable required VM integration services
-    Get-VM -Name $vm | Get-VMIntegrationService | 
-        Where-Object { -not $_.Enabled } | 
-        Enable-VMIntegrationService -Verbose
+    # Enable any disabled integration services for the selected VM
+    Get-VM -Name $vm | Get-VMIntegrationService | Where-Object { -not $_.Enabled } | Enable-VMIntegrationService -Verbose
 
-    # Find latest NVIDIA driver folder
-    $localDriverFolder = Get-ChildItem $driverPath -Directory |
-        Where-Object { $_.Name -match "nv_dispi\.inf_amd64_.*" } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1 -ExpandProperty Name
-
-    if (-not $localDriverFolder) {
-        Write-Host "Error: No NVIDIA driver folder found." -ForegroundColor Yellow
-        exit 1
+    # Find the most recent driver folder for "nv_dispi.infamd64" and set up the local driver folder
+    $localDriverFolder = ""
+    $latestDriverFolder = Get-ChildItem $driverPath -Recurse | Where-Object { $_.PSIsContainer -and $_.Name -match "nv_dispi.infamd64" } | Sort-Object -Property LastWriteTime -Descending | Select-Object -First 1
+    if ($latestDriverFolder) {
+        $localDriverFolder = $latestDriverFolder.Name
+        Write-Host "Latest driver folder: $localDriverFolder"
+        
+        # Copy driver files to the temporary directory on the VM
+        Get-ChildItem "$driverPath$localDriverFolder" -Recurse | Where-Object { -not $_.PSIsContainer } |
+        ForEach-Object {
+            $sourcePath = $_.FullName
+            $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\", "C:\Temp\System32\HostDriverStore\"
+            Copy-VMFile -VMName $vm -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
+        }
     }
 
-    Write-Host "Found driver folder: $localDriverFolder" -ForegroundColor Green
-
-    # Copy driver files
-    $driverFiles = Get-ChildItem (Join-Path $driverPath $localDriverFolder) -Recurse -File
-    foreach ($file in $driverFiles) {
-        $destinationPath = $file.FullName.Replace(
-            "C:\Windows\System32\DriverStore\",
-            "C:\Temp\System32\HostDriverStore\"
-        )
-        Copy-VMFile $vm -SourcePath $file.FullName -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
+    # Copy all files starting with "NV" from System32 to the VM's temp folder
+    Get-ChildItem $systemPath | Where-Object { $_.Name -like "NV*" } |
+    ForEach-Object {
+        $sourcePath = $_.FullName
+        $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\", "C:\Temp\System32\"
+        Copy-VMFile -VMName $vm -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
     }
 
-    # Copy NVIDIA-related files from System32
-    Get-ChildItem $systemPath -File -Filter "NV*" | ForEach-Object {
-        $destinationPath = $_.FullName.Replace(
-            "C:\Windows\System32\",
-            "C:\Temp\System32\"
-        )
-        Copy-VMFile $vm -SourcePath $_.FullName -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
-    }
-
-    Write-Host "Success! Please copy the files from C:\Temp in the VM to their final locations." -ForegroundColor Green
-}
-catch {
-    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
+    Write-Host "Success! Files are available in C:\Temp. Please move them to the appropriate directories within the VM."
+} else {
+    Write-Host "This PowerShell script must be run with Administrative Privileges."
 }
