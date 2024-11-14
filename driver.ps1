@@ -1,99 +1,61 @@
-# Function to check administrative privileges
-function Test-AdminPrivileges {
-    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
+# Paths
+$systemPath = "C:\Windows\System32\"
+$driverPath = "C:\Windows\System32\DriverStore\FileRepository\"
 
-# Function to display available VMs and get user selection
-function Get-VMSelection {
-    $vms = Get-VM
+# Check if script is running as Administrator
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+
+    # List available VMs
+    $vms = Get-VM | Select-Object -ExpandProperty Name
+    Write-Host "Available VMs:"
     for ($i = 0; $i -lt $vms.Count; $i++) {
-        Write-Host "$($i+1). $($vms[$i].Name)"
+        Write-Host "[$($i + 1)] $($vms[$i])"
     }
     
-    do {
-        try {
-            $selection = Read-Host "Select VM number (1-$($vms.Count))"
-            $index = [int]$selection - 1
-        }
-        catch {
-            $index = -1
-        }
-    } while ($index -lt 0 -or $index -ge $vms.Count)
-    
-    return $vms[$index].Name
-}
+    # Prompt to select VM by number
+    $selection = Read-Host "Enter the number of the VM you want to select"
+    if ($selection -match '^\d+$' -and $selection -le $vms.Count) {
+        $vm = $vms[$selection - 1]
+        Write-Host "Selected VM: $vm"
+        
+        # Enable integration services if needed
+        Get-VM -Name $vm | Get-VMIntegrationService | Where-Object {-not $_.Enabled} | Enable-VMIntegrationService -Verbose
 
-# Function to enable VM integration services
-function Enable-VMIntegrationServices {
-    param ([string]$VMName)
-    
-    Get-VM -Name $VMName | 
-    Get-VMIntegrationService | 
-    Where-Object { -not($_.Enabled) } | 
-    Enable-VMIntegrationService
-}
+        # Find the latest NVidia driver folder in DriverStore
+        $latestDriverFolder = Get-ChildItem $driverPath -Recurse |
+            Where-Object { $_.PSIsContainer -and $_.Name -match "nv_dispi.inf_amd64_*" } |
+            Sort-Object -Descending -Property LastWriteTime | Select-Object -First 1
 
-# Function to copy NVIDIA drivers
-function Copy-NvidiaDrivers {
-    param (
-        [string]$VMName
-    )
-    
-    $systemPath = "C:\Windows\System32\"
-    $driverPath = "C:\Windows\System32\DriverStore\FileRepository\"
-    
-    # Find latest NVIDIA driver folder
-    $localDriverFolder = ""
-    Get-ChildItem $driverPath -recurse | 
-        Where-Object {$_.PSIsContainer -eq $true -and $_.Name -match "nv_dispi.inf_amd64_*"} | 
-        Sort-Object -Descending -Property LastWriteTime | 
-        Select-Object -First 1 |
-        ForEach-Object {
-            if ($localDriverFolder -eq "") {
-                $localDriverFolder = $_.Name
+        if ($latestDriverFolder) {
+            Write-Host "Found driver folder: $($latestDriverFolder.Name)"
+
+            # Copy files from DriverStore to VM
+            Get-ChildItem $latestDriverFolder.FullName -Recurse | Where-Object { -not $_.PSIsContainer } |
+            ForEach-Object {
+                $sourcePath = $_.FullName
+                $destinationPath = $sourcePath -replace "^C:\Windows\System32\DriverStore\\", "C:\Temp\System32\HostDriverStore\"
+                Copy-VMFile -VMName $vm -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
             }
+
+            # Copy NVidia-related files from System32 to VM
+            Get-ChildItem $systemPath | Where-Object { $_.Name -like "NV*" } |
+            ForEach-Object {
+                $sourcePath = $_.FullName
+                $destinationPath = $sourcePath -replace "^C:\Windows\System32\\", "C:\Temp\System32\"
+                Copy-VMFile -VMName $vm -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
+            }
+
+            Write-Host "Success! Go to C:\Temp within the VM and move the files to their expected locations."
         }
-    
-    # Copy all files from the driver folder to both locations
-    Get-ChildItem $driverPath$localDriverFolder -recurse | 
-        Where-Object {$_.PSIsContainer -eq $false} |
-        ForEach-Object {
-            $sourcePath = $_.FullName
-
-            # Copy to HostDriverStore
-            $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\", "C:\Temp\System32\HostDriverStore\"
-            Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
-
-            # Copy to FileRepository
-            $destinationPath2 = "C:\Temp\System32\HostDriverStore\FileRepository\$localDriverFolder\" + $_.Name
-            Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath2 -Force -CreateFullPath -FileSource Host
+        else {
+            Write-Host "No NVidia driver folder found in DriverStore."
         }
-    
-    # Copy System32 NVIDIA files
-    Get-ChildItem $systemPath | 
-        Where-Object {$_.Name -like "NV*"} |
-        ForEach-Object {
-            $sourcePath = $_.FullName
-            $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\", "C:\Temp\System32\"
-            Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
-        }
+    }
+    else {
+        Write-Host "Invalid selection. Please run the script again and select a valid number."
+    }
 }
-
-# Main script execution
-if (-not (Test-AdminPrivileges)) {
-    exit 1
-}
-
-try {
-    # Get VM selection from user
-    $selectedVM = Get-VMSelection
-    
-    # Enable integration services
-    Enable-VMIntegrationServices -VMName $selectedVM
-    
-    # Copy NVIDIA drivers
-    Copy-NvidiaDrivers -VMName $selectedVM
-}
-catch {
-    exit 1
+else {
+    Write-Host "This PowerShell Script must be run with Administrative Privileges for it to work."
 }
