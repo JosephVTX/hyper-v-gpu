@@ -57,19 +57,36 @@ function Copy-NvidiaDrivers {
     
     try {
         # Find latest NVIDIA driver folder
-        $localDriverFolder = Get-ChildItem $DriverPath -Recurse |
+        $localDriverFolder = ""
+        Get-ChildItem $DriverPath -Recurse | 
             Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match "nv_dispi.inf_amd64_*" } |
-            Sort-Object -Descending -Property LastWriteTime |
-            Select-Object -First 1 -ExpandProperty Name
+            Sort-Object -Descending -Property LastWriteTime | 
+            Select-Object -First 1 |
+            ForEach-Object {
+                if ($localDriverFolder -eq "") {
+                    $localDriverFolder = $_.Name
+                }
+            }
         
         Write-Host "Found driver folder: $localDriverFolder" -ForegroundColor Green
         
-        # Copy driver files
+        # Copy DriverStore files
         Get-ChildItem "$DriverPath$localDriverFolder" -Recurse |
             Where-Object { -not $_.PSIsContainer } |
             ForEach-Object {
                 $sourcePath = $_.FullName
+                # Maintain original path structure for DriverStore
                 $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\", "C:\Temp\System32\HostDriverStore\"
+                Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
+            }
+
+        # Copy FileRepository files
+        Get-ChildItem "$DriverPath$localDriverFolder" -Recurse |
+            Where-Object { -not $_.PSIsContainer } |
+            ForEach-Object {
+                $sourcePath = $_.FullName
+                # Create additional copy in FileRepository
+                $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\FileRepository\\", "C:\Temp\System32\HostDriverStore\FileRepository\"
                 Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
             }
         
