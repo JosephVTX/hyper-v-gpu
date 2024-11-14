@@ -1,7 +1,8 @@
 # Validación de privilegios de administrador
 if (!([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Este script necesita ejecutarse con privilegios de Administrador. Solicitando permisos..."
-    Start-Process powershell.exe "-ExecutionPolicy Bypass -File $PSCommandPath" -Verb RunAs
+    Write-Host "Este script necesita ejecutarse con privilegios de Administrador. Presiona Enter para continuar y solicitar permisos..."
+    Read-Host
+    Start-Process powershell.exe "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
 
@@ -25,7 +26,7 @@ Write-Host "VM seleccionada: $vm`n"
 $systemPath = "C:\Windows\System32\"
 $driverPath = "C:\Windows\System32\DriverStore\FileRepository\"
 
-# habilitar servicios de integración si no están activos
+# Habilitar servicios de integración si no están activos
 Get-VM -Name $vm | Get-VMIntegrationService | Where-Object {-not($_.Enabled)} | Enable-VMIntegrationService -Verbose
 
 # Buscar y copiar archivos a la carpeta de destino
