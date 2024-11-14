@@ -50,16 +50,17 @@ function Enable-VMIntegrationServices {
 # Function to copy NVIDIA drivers
 function Copy-NvidiaDrivers {
     param (
-        [string]$VMName,
-        [string]$SystemPath = "C:\Windows\System32\",
-        [string]$DriverPath = "C:\Windows\System32\DriverStore\FileRepository\"
+        [string]$VMName
     )
     
     try {
+        $systemPath = "C:\Windows\System32\"
+        $driverPath = "C:\Windows\System32\DriverStore\FileRepository\"
+        
         # Find latest NVIDIA driver folder
         $localDriverFolder = ""
-        Get-ChildItem $DriverPath -Recurse | 
-            Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match "nv_dispi.inf_amd64_*" } |
+        Get-ChildItem $driverPath -recurse | 
+            Where-Object {$_.PSIsContainer -eq $true -and $_.Name -match "nv_dispi.inf_amd64_*"} | 
             Sort-Object -Descending -Property LastWriteTime | 
             Select-Object -First 1 |
             ForEach-Object {
@@ -69,30 +70,25 @@ function Copy-NvidiaDrivers {
             }
         
         Write-Host "Found driver folder: $localDriverFolder" -ForegroundColor Green
-        
-        # Copy DriverStore files
-        Get-ChildItem "$DriverPath$localDriverFolder" -Recurse |
-            Where-Object { -not $_.PSIsContainer } |
+
+        # Copy all files from the driver folder to both locations
+        Get-ChildItem $driverPath$localDriverFolder -recurse | 
+            Where-Object {$_.PSIsContainer -eq $false} |
             ForEach-Object {
                 $sourcePath = $_.FullName
-                # Maintain original path structure for DriverStore
+
+                # Copy to HostDriverStore
                 $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\", "C:\Temp\System32\HostDriverStore\"
                 Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
-            }
 
-        # Copy FileRepository files
-        Get-ChildItem "$DriverPath$localDriverFolder" -Recurse |
-            Where-Object { -not $_.PSIsContainer } |
-            ForEach-Object {
-                $sourcePath = $_.FullName
-                # Create additional copy in FileRepository
-                $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\DriverStore\\FileRepository\\", "C:\Temp\System32\HostDriverStore\FileRepository\"
-                Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath -Force -CreateFullPath -FileSource Host
+                # Copy to FileRepository
+                $destinationPath2 = "C:\Temp\System32\HostDriverStore\FileRepository\$localDriverFolder\" + $_.Name
+                Copy-VMFile $VMName -SourcePath $sourcePath -DestinationPath $destinationPath2 -Force -CreateFullPath -FileSource Host
             }
         
         # Copy System32 NVIDIA files
-        Get-ChildItem $SystemPath |
-            Where-Object { $_.Name -like "NV*" } |
+        Get-ChildItem $systemPath | 
+            Where-Object {$_.Name -like "NV*"} |
             ForEach-Object {
                 $sourcePath = $_.FullName
                 $destinationPath = $sourcePath -replace "^C:\\Windows\\System32\\", "C:\Temp\System32\"
